@@ -40,6 +40,12 @@
     .record{padding:8px;border-radius:8px;border:1px dashed #efefef;margin-bottom:8px}
 
     .small{font-size:12px;color:var(--muted)}
+
+    /* login & import UI */
+    .login-box{display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
+    .import-area{margin-top:10px;padding-top:10px;border-top:1px dashed #eee}
+    .hidden{display:none}
+    .status{font-size:13px;color:var(--muted)}
   </style>
 </head>
 <body>
@@ -85,10 +91,10 @@
           <div class="notice">建议 1 张主图 + 1-8 张详情图；系统会保存到素材库以便复用。</div>
 
           <div style="margin-top:12px" class="actions">
-            <button class="btn" onclick="publishSingle()">发布商品</button>
-            <button class="btn ghost" onclick="saveMaterial()">保存为素材</button>
+            <button id="btnPublish" class="btn" onclick="publishSingle()">发布商品</button>
+            <button id="btnSaveMaterial" class="btn ghost" onclick="saveMaterial()">保存为素材</button>
             <button class="btn ghost" onclick="resetForm()">重置表单</button>
-            <button class="btn ghost" onclick="recognizeAttributes()">智能识别属性</button>
+            <button id="btnRecognize" class="btn ghost" onclick="recognizeAttributes()">智能识别属性</button>
           </div>
 
           <div style="margin-top:14px"><span id="recognize_result" class="small"></span></div>
@@ -106,7 +112,24 @@
           <div style="margin-top:10px">
             <input id="acc_name" placeholder="账号名" />
             <input id="acc_cookie" placeholder="Cookie（可选）" />
-            <div style="margin-top:8px"><button class="btn" onclick="addAccount()">添加账号</button></div>
+            <div style="margin-top:8px"><button id="btnAddAccount" class="btn" onclick="addAccount()">添加账号</button></div>
+          </div>
+          <div class="import-area">
+            <h4>批量导入（CSV）</h4>
+            <div class="login-box" id="loginBox">
+              <div><label>管理员登录（发布/导入需要）</label></div>
+              <input id="login_username" placeholder="用户名（默认 admin）" />
+              <input id="login_password" placeholder="密码（默认 change_me）" type="password" />
+              <div style="display:flex;gap:8px;margin-top:6px"><button class="btn" onclick="doLogin()">登录</button><button class="btn ghost" onclick="doLogout()">登出</button></div>
+              <div id="loginStatus" class="status">未登录：请先登录以启用导入与发布</div>
+            </div>
+
+            <div id="importArea" class="hidden">
+              <input id="import_file" type="file" accept=".csv" />
+              <div style="margin-top:8px"><button class="btn" onclick="doImport()">上传并导入 CSV</button>
+              <button class="btn ghost" onclick="downloadTemplate()">下载模板</button></div>
+              <div id="importResult" style="margin-top:8px"></div>
+            </div>
           </div>
         </div>
 
@@ -126,6 +149,8 @@
   </div>
 
 <script>
+let isAdmin = false;
+
 async function fetchJson(url, opts){
   let r = await fetch(url, opts);
   if(!r.ok){ let t = await r.text(); throw new Error(t||'Request failed'); }
@@ -145,10 +170,61 @@ async function load(){
 
     let mats = await fetchJson('/materials');
     document.getElementById('materials').innerHTML = mats.map(m=>`<div class="material"><img class="material-img" src="/${(m.images||[])[0]||''}" onerror="this.style.display='none'"><div style="flex:1"><b>${m.title}</b><div class="small">${m.description||''}</div></div><div><button class="btn ghost" onclick="importMaterial(${m.id})">导入</button><button class="btn ghost" onclick="deleteMaterial(${m.id})">删除</button></div></div>`).join('');
+
+    updateAuthUI();
   }catch(e){console.error(e)}
 }
 
+function updateAuthUI(){
+  const loginBox = document.getElementById('loginBox');
+  const importArea = document.getElementById('importArea');
+  const addAccountBtn = document.getElementById('btnAddAccount');
+  const publishBtn = document.getElementById('btnPublish');
+  const saveMatBtn = document.getElementById('btnSaveMaterial');
+  const recognizeBtn = document.getElementById('btnRecognize');
+  const loginStatus = document.getElementById('loginStatus');
+
+  if(isAdmin){
+    importArea.classList.remove('hidden');
+    loginStatus.innerText = '已登录（管理员）';
+    addAccountBtn.disabled = false;
+    publishBtn.disabled = false;
+    saveMatBtn.disabled = false;
+    recognizeBtn.disabled = false;
+  } else {
+    importArea.classList.add('hidden');
+    loginStatus.innerText = '未登录：请先登录以启用导入与发布';
+    addAccountBtn.disabled = true;
+    publishBtn.disabled = true;
+    saveMatBtn.disabled = true;
+    recognizeBtn.disabled = false; // attribute recognize allowed
+  }
+}
+
+async function doLogin(){
+  try{
+    const username = document.getElementById('login_username').value || 'admin';
+    const password = document.getElementById('login_password').value || 'change_me';
+    let fd = new FormData(); fd.append('username', username); fd.append('password', password);
+    let r = await fetch('/auth/login', {method:'POST', body:fd});
+    if(!r.ok) throw new Error(await r.text());
+    isAdmin = true;
+    updateAuthUI();
+    alert('登录成功');
+  }catch(e){alert('登录失败: '+e.message)}
+}
+
+async function doLogout(){
+  try{
+    await fetch('/auth/logout', {method:'POST'});
+    isAdmin = false;
+    updateAuthUI();
+    alert('已登出');
+  }catch(e){alert('登出失败: '+e.message)}
+}
+
 async function addAccount(){
+  if(!isAdmin){alert('请先登录管理员账号');return}
   let name = document.getElementById('acc_name').value;
   let cookie = document.getElementById('acc_cookie').value;
   await fetchJson('/accounts', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, cookie})});
@@ -156,6 +232,7 @@ async function addAccount(){
 }
 
 async function addProduct(){
+  if(!isAdmin){alert('请先登录管理员账号');return}
   let title = document.getElementById('p_title').value;
   let category = document.getElementById('p_category').value;
   let description = document.getElementById('p_description').value;
@@ -167,6 +244,7 @@ async function addProduct(){
 }
 
 async function uploadImagesToProduct(pid, files){
+  if(!isAdmin){alert('请先登录管理员账号');return}
   for(let f of files){
     let fd = new FormData();
     fd.append('file', f, f.name);
@@ -176,6 +254,7 @@ async function uploadImagesToProduct(pid, files){
 
 async function publishSingle(){
   try{
+    if(!isAdmin){alert('请先登录管理员账号');return}
     let pid = await addProduct();
     let files = document.getElementById('p_images').files;
     if(files && files.length>0){
@@ -193,6 +272,7 @@ async function publishSingle(){
 
 async function saveMaterial(){
   try{
+    if(!isAdmin){alert('请先登录管理员账号');return}
     let title = document.getElementById('p_title').value;
     let description = document.getElementById('p_description').value;
     let res = await fetchJson('/materials', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({title, description})});
@@ -210,7 +290,7 @@ async function saveMaterial(){
   }catch(e){alert('保存素材失败: '+e.message)}
 }
 
-async function deleteMaterial(mid){ if(!confirm('确认删除素材?')) return; await fetchJson(`/materials/${mid}`, {method:'DELETE'}); load(); }
+async function deleteMaterial(mid){ if(!isAdmin){alert('请先登录管理员账号');return} if(!confirm('确认删除素材?')) return; await fetchJson(`/materials/${mid}`, {method:'DELETE'}); load(); }
 async function importMaterial(mid){ let mats = await fetchJson('/materials'); let m = mats.find(x=>x.id===mid); if(m){ document.getElementById('p_title').value = m.title || ''; document.getElementById('p_description').value = m.description || ''; } }
 
 async function recognizeAttributes(){
@@ -227,6 +307,27 @@ async function recognizeAttributes(){
 function resetForm(){ document.getElementById('p_title').value=''; document.getElementById('p_category').value=''; document.getElementById('p_description').value=''; document.getElementById('p_price').value=''; document.getElementById('p_original_price').value=''; document.getElementById('p_spec').value=''; document.getElementById('p_images').value=''; document.getElementById('preview_images').innerHTML=''; }
 
 document.getElementById('p_images').addEventListener('change', (e)=>{ let out = document.getElementById('preview_images'); out.innerHTML=''; let files = e.target.files; if(files.length>9){ alert('最多上传9张图片'); e.target.value=''; return } for(let f of files){ let img = document.createElement('img'); img.className='img-thumb'; img.src = URL.createObjectURL(f); out.appendChild(img); } });
+
+// Import CSV
+async function doImport(){
+  if(!isAdmin){alert('请先登录管理员账号');return}
+  let fileInput = document.getElementById('import_file');
+  if(!fileInput.files || fileInput.files.length===0){alert('请选择 CSV 文件');return}
+  let file = fileInput.files[0];
+  let fd = new FormData(); fd.append('file', file, file.name);
+  try{
+    let res = await fetch('/import-products', {method:'POST', body:fd});
+    let j = await res.json();
+    let out = document.getElementById('importResult');
+    out.innerHTML = '<div class="small">导入完成：创建 '+ (j.created? j.created.length:0) +' 条；错误 '+ (j.errors? j.errors.length:0) +'</div>' +
+      '<pre style="max-height:200px;overflow:auto;background:#f8f9fb;padding:8px;border-radius:6px">' + JSON.stringify(j, null, 2) + '</pre>';
+    load();
+  }catch(e){alert('导入失败: '+e.message)}
+}
+
+function downloadTemplate(){
+  window.location.href = '/frontend/products_template.csv';
+}
 
 load().catch(e=>console.error(e));
 </script>
