@@ -1,0 +1,233 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Xianyu Custom - Admin</title>
+  <style>
+    body{font-family: Arial, sans-serif; display:flex; gap:20px; padding:20px}
+    .col{flex:1}
+    .main{flex:2}
+    input, textarea{width:100%; padding:8px; margin:6px 0}
+    button{padding:8px 12px; margin-right:6px}
+    .item{border:1px solid #ddd; padding:10px; margin:6px 0}
+    .sidebar{width:360px}
+    .material-img{width:80px;height:80px;object-fit:cover;margin-right:6px}
+    .imgs-row{display:flex;flex-wrap:wrap;gap:6px}
+    .notice{color:#666;font-size:13px}
+  </style>
+</head>
+<body>
+  <div class="col">
+    <h2>Accounts</h2>
+    <div id="accounts"></div>
+    <h3>Add Account</h3>
+    <input id="acc_name" placeholder="name" />
+    <input id="acc_cookie" placeholder="cookie (optional)" />
+    <button onclick="addAccount()">Add</button>
+  </div>
+
+  <div class="main">
+    <h2>商品发布 / 编辑</h2>
+    <div>
+      <label>商品标题</label>
+      <input id="p_title" placeholder="输入商品标题" />
+      <label>类别提示（可选）</label>
+      <input id="p_category" placeholder="例如：手机、数码配件、图书" />
+      <label>商品描述</label>
+      <textarea id="p_description" placeholder="输入商品描述"></textarea>
+
+      <div style="display:flex;gap:8px">
+        <div style="flex:1">
+          <label>现价</label>
+          <input id="p_price" placeholder="现价" />
+        </div>
+        <div style="flex:1">
+          <label>原价（可选）</label>
+          <input id="p_original_price" placeholder="原价（可选）" />
+        </div>
+      </div>
+
+      <label>支持买家自提</label>
+      <input type="checkbox" id="p_self_pickup" />
+
+      <label>商品规格</label>
+      <input id="p_spec" placeholder="如：颜色/版本/数量（多规格可用逗号分隔）" />
+
+      <label>商品图片（1-9 张）</label>
+      <input id="p_images" type="file" multiple accept="image/*" />
+      <div class="imgs-row" id="preview_images"></div>
+      <div class="notice">上传建议：1-9 张，优先主图，系统可在保存时把图片保存到素材库。</div>
+
+      <div style="margin-top:8px">
+        <button onclick="publishSingle()">发布商品</button>
+        <button onclick="saveMaterial()">保存素材</button>
+        <button onclick="resetForm()">重置表单</button>
+      </div>
+
+      <div style="margin-top:12px">
+        <button onclick="recognizeAttributes()">属性智能识别</button>
+        <span id="recognize_result"></span>
+      </div>
+    </div>
+
+    <h3 style="margin-top:18px">商品列表</h3>
+    <div id="products"></div>
+  </div>
+
+  <div class="sidebar">
+    <div style="border:1px solid #eee;padding:10px;margin-bottom:10px">
+      <h3>素材库</h3>
+      <div id="materials"></div>
+    </div>
+    <div style="border:1px solid #eee;padding:10px">
+      <h3>发布记录</h3>
+      <div id="records"></div>
+    </div>
+  </div>
+
+<script>
+async function fetchJson(url, opts){
+  let r = await fetch(url, opts);
+  if(!r.ok){
+    let txt = await r.text();
+    throw new Error(txt || 'Request failed');
+  }
+  return r.json();
+}
+
+async function load(){
+  try{
+    let accs = await fetchJson('/accounts');
+    let products = await fetchJson('/products');
+    document.getElementById('accounts').innerHTML = accs.map(a=>`<div class="item">ID:${a.id} ${a.name} (${a.enabled? 'on':'off'})</div>`).join('');
+    document.getElementById('products').innerHTML = products.map(p=>`<div class="item">ID:${p.id} <b>${p.title}</b><div class="imgs-row">${(p.images||[]).map(i=>`<img src="/${i}" style="width:80px;height:80px;object-fit:cover;margin-right:6px">`).join('')}</div></div>`).join('');
+    let recs = await fetchJson('/publish-records');
+    document.getElementById('records').innerHTML = recs.map(r=>`<div class="item">${r.created_at} acc:${r.account_id} pid:${r.product_id}</div>`).join('');
+
+    let mats = await fetchJson('/materials');
+    document.getElementById('materials').innerHTML = mats.map(m=>`<div class="item"><b>${m.title}</b><div class="imgs-row">${(m.images||[]).map(i=>`<img class="material-img" src="/${i}">`).join('')}</div><div style="margin-top:6px"><button onclick="importMaterial(${m.id})">导入</button><button onclick="deleteMaterial(${m.id})">删除</button></div></div>`).join('');
+  }catch(e){
+    console.error(e);
+  }
+}
+
+async function addAccount(){
+  let name = document.getElementById('acc_name').value;
+  let cookie = document.getElementById('acc_cookie').value;
+  await fetchJson('/accounts', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, cookie})});
+  load();
+}
+
+async function addProduct(){
+  let title = document.getElementById('p_title').value;
+  let category = document.getElementById('p_category').value;
+  let description = document.getElementById('p_description').value;
+  let price = parseFloat(document.getElementById('p_price').value)||0;
+  let original_price = parseFloat(document.getElementById('p_original_price').value)||0;
+  let spec = document.getElementById('p_spec').value || '';
+  let res = await fetchJson('/products', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({title, category, description, price, original_price, spec})});
+  return res.id;
+}
+
+async function uploadImagesToProduct(pid, files){
+  for(let f of files){
+    let fd = new FormData();
+    fd.append('file', f, f.name);
+    await fetchJson(`/products/${pid}/upload-image`, {method:'POST', body:fd});
+  }
+}
+
+async function publishSingle(){
+  try{
+    let pid = await addProduct();
+    let files = document.getElementById('p_images').files;
+    if(files && files.length>0){
+      await uploadImagesToProduct(pid, files);
+    }
+    // For demo: publish to all accounts
+    let accs = await fetchJson('/accounts');
+    let aids = accs.map(a=>a.id);
+    await fetchJson('/publish', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({product_ids:[pid], account_ids:aids})});
+    alert('已发布（模拟）');
+    load();
+  }catch(e){
+    alert('发布失败: '+e.message);
+  }
+}
+
+async function saveMaterial(){
+  try{
+    let title = document.getElementById('p_title').value;
+    let description = document.getElementById('p_description').value;
+    let res = await fetchJson('/materials', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({title, description})});
+    let mid = res.id;
+    let files = document.getElementById('p_images').files;
+    if(files && files.length>0){
+      for(let f of files){
+        let fd = new FormData();
+        fd.append('file', f, f.name);
+        await fetch(`/materials/${mid}/upload-image`, {method:'POST', body:fd});
+      }
+    }
+    alert('素材已保存');
+    load();
+  }catch(e){
+    alert('保存素材失败: '+e.message);
+  }
+}
+
+async function deleteMaterial(mid){
+  if(!confirm('确认删除素材?')) return;
+  await fetchJson(`/materials/${mid}`, {method:'DELETE'});
+  load();
+}
+
+async function importMaterial(mid){
+  // load material and fill form
+  let mats = await fetchJson('/materials');
+  let m = mats.find(x=>x.id===mid);
+  if(m){
+    document.getElementById('p_title').value = m.title || '';
+    document.getElementById('p_description').value = m.description || '';
+  }
+}
+
+async function recognizeAttributes(){
+  let title = document.getElementById('p_title').value;
+  let desc = document.getElementById('p_description').value;
+  let fd = new FormData();
+  fd.append('title', title);
+  fd.append('description', desc);
+  let r = await fetch('/recognize-attributes', {method:'POST', body:fd});
+  let j = await r.json();
+  if(j.category) document.getElementById('p_category').value = j.category;
+  if(j.spec) document.getElementById('p_spec').value = j.spec;
+  document.getElementById('recognize_result').innerText = '已识别: ' + JSON.stringify(j);
+}
+
+function resetForm(){
+  document.getElementById('p_title').value='';
+  document.getElementById('p_category').value='';
+  document.getElementById('p_description').value='';
+  document.getElementById('p_price').value='';
+  document.getElementById('p_original_price').value='';
+  document.getElementById('p_images').value='';
+  document.getElementById('preview_images').innerHTML='';
+}
+
+// preview images
+document.getElementById('p_images').addEventListener('change', (e)=>{
+  let out = document.getElementById('preview_images'); out.innerHTML='';
+  let files = e.target.files;
+  for(let f of files){
+    let img = document.createElement('img');
+    img.style.width='80px'; img.style.height='80px'; img.style.objectFit='cover'; img.style.marginRight='6px';
+    img.src = URL.createObjectURL(f);
+    out.appendChild(img);
+  }
+});
+
+load().catch(e=>console.error(e));
+</script>
+</body>
+</html>
